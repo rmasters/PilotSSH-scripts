@@ -1,0 +1,70 @@
+#!/bin/bash
+
+# Available/enabled sites
+available=(/etc/nginx/sites-available/*)
+parsedAvailable=()
+enabled=(/etc/nginx/sites-enabled/*)
+parsedEnabled=()
+
+# Enumerate available vhosts
+for a in ${available[*]}
+do
+    file=`basename $a`
+    parsedAvailable+=($file)
+done
+
+# Enumerate enabled vhosts
+if [ "$(ls --almost-all /etc/nginx/sites-enabled)" ]
+then
+    # Update parsedAvailable to only include vhosts that are not enabled
+    for f in ${enabled[*]}
+    do
+        path=`readlink -f $f`
+        file=`basename $path`
+
+        # Find the enabled vhost in parsedAvailable
+        for ((i = 0; i < ${#parsedAvailable[*]}; i++)); do
+            if [ $file == "${parsedAvailable[i]}" ]
+            then
+                unset parsedAvailable[$i]
+                break
+            fi
+        done
+
+        # Add to parsedEnabled
+        parsedEnabled+=($file)
+    done
+fi
+
+# Build result JSON
+result="{ \"version\": 1, \"title\": \"Nginx Hosts\", \"type\": \"commands\", \"values\": ["
+
+# If at least one site is enabled, add the disabled site command for site #1
+if [ ${#parsedEnabled[*]} -gt 0 ]
+then
+    result=$result"{\"name\": \"${parsedEnabled[0]}\", \"value\": \"enabled\", \"command\": \".pilotssh/nginx/nginx_remove_site.sh ${parsedEnabled[0]}\"}"
+fi
+
+# Add disable actions for the rest of the enabled sites
+for ((i=1; i<${#parsedEnabled[*]}; i++)); do
+    result=$result", {\"name\": \"${parsedEnabled[i]}\", \"value\": \"enabled\", \"command\": \".pilotssh/nginx/nginx_remove_site.sh ${parsedEnabled[i]}\"}"
+done
+
+filteredAvailable=( "${parsedAvailable[@]}" )
+
+# Dump out the enabled sites, with no leading comma if there were enabled sites
+first=0
+if [ ${#parsedEnabled[*]} -eq 0 ]
+then
+    result=$result"{\"name\" : \"${filteredAvailable[0]}\", \"value\":\"disabled\", \"command\":\".pilotssh/nginx/nginx_enable_site.sh ${filteredAvailable[0]}\"}"
+    first=1
+fi
+
+# All the other available sites (including first if we didn't just print that one)
+for ((i=first; i<${#filteredAvailable[*]}; i++)); do
+    result=$result", {\"name\" : \"${filteredAvailable[i]}\", \"value\":\"disabled\", \"command\":\".pilotssh/nginx/nginx_enable_site.sh ${filteredAvailable[i]}\"}"
+done
+
+result=$result"]}"
+
+echo $result
